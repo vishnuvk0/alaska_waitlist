@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Flight Waitlist Tracker</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    .result { margin-top: 1em; padding: 1em; border: 1px solid #ccc; background: #fafafa; white-space: pre-wrap; }
+    input { margin-bottom: 0.5em; display: block; }
+  </style>
+</head>
+<body>
+  <h1>Flight Waitlist Tracker</h1>
+  <form id="trackerForm">
+    <label>
+      Flight Number:
+      <input type="text" id="flightNumber" placeholder="e.g. 3411" required />
+    </label>
+    <label>
+      Flight Date (yyyy-mm-dd):
+      <input type="date" id="flightDate" required />
+    </label>
+    <label>
+      Your Name (LastName/FirstInitial):
+      <input type="text" id="userName" placeholder="KUM/V" />
+    </label>
+    <button type="submit">Check Waitlist</button>
+  </form>
+
+  <div class="result" id="resultArea"></div>
+
+  <script>
+    const form = document.getElementById('trackerForm');
+    const resultArea = document.getElementById('resultArea');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      resultArea.textContent = 'Checking waitlist...';
+
+      const flightNumber = document.getElementById('flightNumber').value.trim();
+      const flightDate = document.getElementById('flightDate').value.trim();
+      const userName = document.getElementById('userName').value.trim();
+
+      try {
+        const response = await fetch('/api/trackWaitlist', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ flightNumber, flightDate, userName })
+        });
+        const data = await response.json();
+
+        if (data.error) {
+          resultArea.textContent = `Error: ${data.error}`;
+          return;
+        }
+
+        let message = 'Waitlist Results:\n\n';
+        
+        if (data.waitlistInfo) {
+          message += `First Class Info:\n`;
+          message += `- Capacity: ${data.waitlistInfo.capacity || 'N/A'}\n`;
+          message += `- Available Seats: ${data.waitlistInfo.available || 'N/A'}\n`;
+          message += `- Checked In: ${data.waitlistInfo.checkedIn || 'N/A'}\n\n`;
+        }
+
+        if (data.names && data.names.length > 0) {
+          message += 'Current Waitlist:\n';
+          data.names.forEach((name, index) => {
+            message += `${index + 1}. ${name}\n`;
+          });
+        } else {
+          message += 'No names found on waitlist.\n';
+        }
+
+        if (data.changes) {
+          if (data.changes.newNames.length > 0) {
+            message += '\nNew additions:\n';
+            data.changes.newNames.forEach(name => message += `+ ${name}\n`);
+          }
+          if (data.changes.droppedNames.length > 0) {
+            message += '\nDropped from list:\n';
+            data.changes.droppedNames.forEach(name => message += `- ${name}\n`);
+          }
+        }
+
+        resultArea.textContent = message;
+
+      } catch (err) {
+        console.error(err);
+        resultArea.textContent = 'An error occurred while fetching the waitlist.';
+      }
+    });
+
+    // // Optional: re-check automatically every hour (in real usage, you'd do server-side scheduling).
+    // setInterval(() => {
+    //   form.requestSubmit();
+    // }, 60 * 1000);
+  </script>
+</body>
+</html>
+
