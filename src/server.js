@@ -3,10 +3,21 @@ import * as cheerio from 'cheerio';
 import { handlePressAndHoldVerification, needsVerification, getBrowser, createPage } from './browser-utils.js';
 import { rateLimiter } from './rate-limiter.js';
 import db from './db.js';
+import { parseFlightSegments, parseWaitlistForSegment } from './flight-utils.js';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
-app.use(express.static('../public'));
+app.use(express.static(path.join(__dirname, '../public')));
 app.use(express.json());
+
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, '../public/index.html'));
+});
 
 /** 
  * In-memory store of waitlists keyed by flightNumber+flightDate:
@@ -27,47 +38,54 @@ async function parseWaitlistNames(html) {
   const $ = cheerio.load(html);
   console.log('\n=== Starting HTML Parse ===');
   
-  const containers = $('[class*="waitlist"], .upgrade-container, div:contains("Upgrade")');
-  console.log('\nFound containers with classes:', containers.map((_, el) => $(el).attr('class')).get());
-  
-  const names = [];
-  
-  containers.each((_, container) => {
-    console.log('\n=== Container Content ===');
-    console.log('Container HTML:', $(container).html());
-    console.log('Container text:', $(container).text());
-    
-    // Look for any table structure or list structure
-    const rows = $(container).find('tr, .waitlist-row, .row, div[class*="row"]');
-    console.log(`\nFound ${rows.length} rows in container`);
-    
-    rows.each((rowIndex, row) => {
-      console.log(`\n--- Row ${rowIndex + 1} Content ---`);
-      console.log('Row classes:', $(row).attr('class'));
-      console.log('Row HTML:', $(row).html());
-      console.log('Row text:', $(row).text().trim());
-      
-      // Look for cells with potential names
-      const cells = $(row).find('td, div, span');
-      cells.each((cellIndex, cell) => {
-        const cellText = $(cell).text().trim();
-        console.log(`Cell ${cellIndex + 1} text: "${cellText}"`);
-        
-        // Check for name pattern (XXX/X)
-        if (/^[A-Z]{2,3}\/[A-Z]/.test(cellText)) {
-          console.log(`Found name match: ${cellText}`);
-          if (!names.includes(cellText)) {
-            names.push(cellText);
-          }
-        }
-      });
-    });
+  const waitlistInfo = {
+    capacity: null,
+    available: null,
+    checkedIn: null,
+    names: []
+  };
+
+  // Find the upgrade requests container
+  const upgradeContainer = $('div.waitlist-single-container').filter((_, container) => {
+    return $(container).find('h4').text().includes('Upgrade requests');
   });
 
-  console.log('\n=== Final Results ===');
-  console.log('Total names found:', names.length);
-  console.log('Names:', names);
-  return names;
+  if (upgradeContainer.length) {
+    console.log('Found upgrade requests container');
+    
+    // Parse waitlist info
+    const infoTexts = upgradeContainer.find('.waitlist-text-container span').map((_, el) => $(el).text()).get();
+    infoTexts.forEach(text => {
+      if (text.includes('capacity')) {
+        waitlistInfo.capacity = parseInt(text.match(/\d+/)[0]);
+      } else if (text.includes('Available')) {
+        waitlistInfo.available = parseInt(text.match(/\d+/)[0]);
+      } else if (text.includes('Checked-in')) {
+        waitlistInfo.checkedIn = parseInt(text.match(/\d+/)[0]);
+      }
+    });
+
+    // Parse names from the table
+    const names = upgradeContainer
+      .find('table.auro_table tbody tr')
+      .map((_, row) => {
+        const nameCell = $(row).find('td').eq(1);
+        const name = nameCell.text().trim();
+        if (name && /^[A-Z]{2,3}\/[A-Z]$/.test(name)) {
+          return name;
+        }
+      })
+      .get()
+      .filter(Boolean);
+
+    console.log('Found names:', names);
+    waitlistInfo.names = names;
+  } else {
+    console.log('No upgrade requests container found');
+  }
+
+  console.log('Parsed waitlist info:', waitlistInfo);
+  return waitlistInfo;
 }
 
 /** 
@@ -140,6 +158,51 @@ async function getWaitlistInfo(page) {
 
 // Initialize database on startup
 db.initDb().catch(console.error);
+
+const logFile = './debug.log';
+
+function debugLog(message, consoleOnly = false) {
+  const timestamp = new Date().toISOString();
+  const logMessage = `${timestamp}: ${message}\n`;
+  
+  // Always log to console
+  console.log(message);
+  
+  // Log to file unless consoleOnly is true
+  if (!consoleOnly) {
+    fs.appendFileSync(logFile, logMessage);
+  }
+}
+
+async function logDatabaseState() {
+  try {
+    debugLog('\n=== Current Database State ===', true);
+    
+    // Query flights table
+    const flights = await db.db.all('SELECT * FROM flights ORDER BY flight_date DESC, flight_number');
+    debugLog('\nFlights Table:', true);
+    console.table(flights);
+
+    // Query waitlist snapshots with flight info
+    const snapshots = await db.db.all(`
+      SELECT 
+        w.*,
+        f.flight_number,
+        f.flight_date,
+        f.origin,
+        f.destination
+      FROM waitlist_snapshots w
+      JOIN flights f ON w.flight_id = f.id
+      ORDER BY w.snapshot_time DESC
+    `);
+    debugLog('\nWaitlist Snapshots Table:', true);
+    console.table(snapshots);
+    
+    debugLog('\n=== End Database State ===\n', true);
+  } catch (error) {
+    debugLog('Error logging database state: ' + error.message, true);
+  }
+}
 
 app.post('/api/trackWaitlist', async (req, res) => {
   const { flightNumber, flightDate, userName } = req.body;
@@ -263,41 +326,62 @@ app.post('/api/trackWaitlist', async (req, res) => {
     }
     
     const content = await page.content();
-    const names = await parseWaitlistNames(content);
-    const waitlistInfo = await getWaitlistInfo(page);
+    const $ = cheerio.load(content);
 
-    // Record successful scrape
-    rateLimiter.recordScrape(flightKey);
-
-    // Store in database and send response
-    const previousData = previousWaitlists[flightKey];
-    const changes = previousData ? compareWaitlists(previousData.waitlist, names) : { newNames: names, droppedNames: [] };
-    
-    previousWaitlists[flightKey] = {
-      waitlist: names,
-      timestamp: Date.now()
-    };
-
-    // Store in database
-    if (db.isDbAvailable) {
-      const flightId = await db.saveFlightInfo(
-        flightNumber, 
-        flightDate,
-        null, // departureTime - not available in current implementation
-        null, // origin - not available in current implementation
-        null  // destination - not available in current implementation
-      );
-      
-      await db.saveWaitlistSnapshot(flightId, names, waitlistInfo);
-    }
-
-    res.json({ 
-      success: true, 
-      names, 
-      waitlistInfo,
-      changes,
-      nextScrapeAvailableIn: rateLimiter.intervalMs
+    // Parse all flight segments
+    const segments = parseFlightSegments($);
+    debugLog(`Found ${segments.length} flight segments`, true);
+    segments.forEach((segment, i) => {
+      debugLog(`Segment ${i + 1}:
+        Flight: AS${segment.flightNumber}
+        Route: ${segment.origin} → ${segment.destination}
+        Date: ${segment.date}
+        Departure: ${segment.departureTime}
+        Arrival: ${segment.arrivalTime}`, true);
     });
+
+    // Process each segment
+    const processedSegments = await Promise.all(segments.map(async (segment, index) => {
+      const waitlistInfo = parseWaitlistForSegment($, index);
+      debugLog(`Waitlist info for segment ${index + 1}:`, true);
+      debugLog(JSON.stringify(waitlistInfo, null, 2), true);
+      
+      // Save to database
+      if (db.isDbAvailable && waitlistInfo) {
+        const flightId = await db.saveFlightSegment(segment, index);
+        if (flightId) {
+          await db.saveWaitlistSnapshot(flightId, waitlistInfo);
+        }
+      }
+      
+      return {
+        flightNumber: segment.flightNumber,
+        date: segment.date,
+        origin: segment.origin,
+        destination: segment.destination,
+        departureTime: segment.departureTime,
+        arrivalTime: segment.arrivalTime,
+        names: waitlistInfo ? waitlistInfo.names : [],
+        waitlistInfo: {
+          capacity: waitlistInfo ? waitlistInfo.capacity : null,
+          available: waitlistInfo ? waitlistInfo.available : null,
+          checkedIn: waitlistInfo ? waitlistInfo.checkedIn : null
+        }
+      };
+    }));
+
+    // Record successful scrape and send response
+    rateLimiter.recordScrape(flightKey);
+    
+    debugLog('Sending response with segments:', true);
+    debugLog(JSON.stringify(processedSegments, null, 2), true);
+
+    await logDatabaseState();
+    res.json({
+      success: true,
+      segments: processedSegments
+    });
+
   } catch (error) {
     console.error('Error in trackWaitlist:', error);
     
@@ -322,7 +406,65 @@ app.post('/api/trackWaitlist', async (req, res) => {
   }
 });
 
-const PORT = 3000;
-app.listen(PORT, () => {
-  console.log(`Server running at http://localhost:${PORT}`);
+app.get('/api/getCachedWaitlist', async (req, res) => {
+  const { flightNumber, flightDate } = req.query;
+  if (!flightNumber || !flightDate) {
+    return res.status(400).json({ error: 'Missing required fields.' });
+  }
+
+  try {
+    const segments = await db.getLatestWaitlistData(flightNumber, flightDate);
+    res.json({ success: true, segments });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
+
+// Rename existing endpoint to differentiate
+app.post('/api/refreshWaitlist', async (req, res) => {
+  // ... (existing trackWaitlist code) ...
+});
+
+const startServer = async (retries = 3) => {
+  const findAvailablePort = async (startPort) => {
+    for (let port = startPort; port < startPort + 10; port++) {
+      try {
+        await new Promise((resolve, reject) => {
+          const server = app.listen(port)
+            .once('listening', () => {
+              resolve(server);
+            })
+            .once('error', (err) => {
+              if (err.code === 'EADDRINUSE') {
+                resolve(false);
+              } else {
+                reject(err);
+              }
+            });
+        });
+        console.log(`Server running at http://localhost:${port}`);
+        return true;
+      } catch (err) {
+        console.error(`Failed to start server on port ${port}:`, err);
+        if (retries <= 0) throw err;
+      }
+    }
+    return false;
+  };
+
+  try {
+    const success = await findAvailablePort(3000);
+    if (!success && retries > 0) {
+      console.log(`Retrying server start... (${retries} attempts remaining)`);
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      return startServer(retries - 1);
+    } else if (!success) {
+      throw new Error('Could not find available port after retries');
+    }
+  } catch (error) {
+    console.error('Failed to start server:', error);
+    process.exit(1);
+  }
+};
+
+startServer();
