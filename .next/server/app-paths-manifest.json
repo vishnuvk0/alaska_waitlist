@@ -1,0 +1,4 @@
+{
+  "/page": "app/page.js",
+  "/api/trackWaitlist/route": "app/api/trackWaitlist/route.js"
+}
