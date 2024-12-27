@@ -72,7 +72,7 @@ export default function Home() {
 
   return (
     <main className="container mx-auto p-4 max-w-2xl">
-      <h1 className="text-3xl font-bold mb-8 text-center">Alaska Airlines Waitlist Checker</h1>
+      <h1 className="text-3xl font-bold mb-8 text-center"> Waitlist Checker</h1>
       <div className="space-y-8">
         <WaitlistForm onSubmit={handleSubmit} />
         {loading && (

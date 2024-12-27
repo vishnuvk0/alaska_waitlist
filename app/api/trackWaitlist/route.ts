@@ -4,6 +4,8 @@ import { rateLimiter } from '@/lib/rate-limiter';
 import { debugLog, logDatabaseState } from '@/lib/server-utils';
 import db from '@/lib/db';
 
+export const dynamic = 'force-dynamic';
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();

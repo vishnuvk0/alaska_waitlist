@@ -15,6 +15,7 @@ export interface WaitlistSegment {
   arrivalTime: string;
   position: number | null;
   totalWaitlisted: number | null;
+  names?: string[];
   error?: string;
 }
 
@@ -90,6 +91,7 @@ export async function trackWaitlist(
         ...segment,
         position,
         totalWaitlisted,
+        names: waitlistInfo?.names || []
       });
     }
 
