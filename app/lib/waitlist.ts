@@ -38,6 +38,25 @@ async function getPageContent(page: Page): Promise<string> {
   }
 }
 
+function convertDateFormat(dateStr: string): string {
+  // If it's already in YYYY-MM-DD format, return as is
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    return dateStr;
+  }
+
+  // Parse the date string (e.g., "December 29, 2024")
+  const date = new Date(dateStr);
+  if (isNaN(date.getTime())) {
+    throw new Error(`Invalid date format: ${dateStr}`);
+  }
+
+  // Convert to YYYY-MM-DD format
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 export async function trackWaitlist(
   flightNumber: string,
   flightDate: string,
@@ -45,9 +64,13 @@ export async function trackWaitlist(
   forceRefresh: boolean = false
 ): Promise<WaitlistResult> {
   // First check the database
-  try {
-    if (!forceRefresh) {
-      const cachedData = await db.getLatestWaitlistData(flightNumber, flightDate);
+  if (!forceRefresh) {
+    try {
+      // Convert the input date to database format for comparison
+      const dbFlightDate = convertDateFormat(flightDate);
+      debugLog(`Checking database for flight ${flightNumber} on ${dbFlightDate}`);
+      
+      const cachedData = await db.getLatestWaitlistData(flightNumber, dbFlightDate);
       if (cachedData && cachedData.length > 0) {
         // Check if data is less than 5 minutes old
         const latestSnapshot = cachedData[0];
@@ -96,22 +119,27 @@ export async function trackWaitlist(
           }
           return { segments };
         } else {
-          debugLog('Cached data is older than 5 minutes, fetching fresh data');
+          debugLog('Cache miss: Data is older than 5 minutes');
         }
+      } else {
+        debugLog('Cache miss: No data found in database');
       }
-    } else {
-      debugLog('Force refresh requested, bypassing cache');
+    } catch (error) {
+      debugLog('Error checking cache: ' + (error instanceof Error ? error.message : 'Unknown error'), 'error');
     }
-  } catch (error) {
-    debugLog('Error checking cache: ' + (error instanceof Error ? error.message : 'Unknown error'), 'error');
+  } else {
+    debugLog('Bypassing cache due to force refresh');
   }
 
-  // If we get here, we need to fetch fresh data
+  // If we get here, it means we had a cache miss or force refresh
+  debugLog('Fetching fresh data from Alaska Airlines website');
   let page: Page | undefined;
   
   try {
     page = await createPage();
-    const url = `https://www.alaskaair.com/status/${flightNumber}/${flightDate}`;
+    // Convert date to YYYY-MM-DD format for Alaska Airlines URL
+    const urlDate = convertDateFormat(flightDate);
+    const url = `https://www.alaskaair.com/status/${flightNumber}/${urlDate}`;
     
     debugLog(`Navigating to ${url}`);
     await page.goto(url, { waitUntil: 'networkidle0', timeout: 30000 });
@@ -151,7 +179,10 @@ export async function trackWaitlist(
         const waitlistInfo = parseWaitlistForSegment($, i);
         
         // Save to database
-        const flightId = await db.saveFlightSegment(segment, i);
+        const flightId = await db.saveFlightSegment({
+          ...segment,
+          date: convertDateFormat(segment.date)
+        }, i);
         if (flightId && waitlistInfo) {
           await db.saveWaitlistSnapshot(flightId, waitlistInfo);
         }
