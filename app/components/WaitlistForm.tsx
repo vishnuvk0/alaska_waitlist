@@ -1,36 +1,50 @@
 import React from 'react';
 import { useForm } from 'react-hook-form';
-import { CalendarIcon, Plane, User, Search } from 'lucide-react';
+import { Card, CardContent } from './ui/card';
+import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
-import { Button } from './ui/button';
-import { Card, CardContent } from './ui/card';
+import { CalendarIcon, Plane, User, Search } from 'lucide-react';
 
 export interface WaitlistFormData {
   flightNumber: string;
   flightDate: string;
-  userName?: string;
+  userName: string;
 }
 
 interface WaitlistFormProps {
   onSubmit: (data: WaitlistFormData) => void;
 }
 
-export function WaitlistForm({ onSubmit }: WaitlistFormProps) {
+export function WaitlistForm({ onSubmit }: WaitlistFormProps): React.ReactElement {
   const today = new Date().toISOString().split('T')[0];
   
-  const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<WaitlistFormData>({
+  const {
+    register,
+    handleSubmit,
+    formState: { errors, isSubmitting }
+  } = useForm<WaitlistFormData>({
     defaultValues: {
-      flightNumber: '3411',
+      flightNumber: '',
       flightDate: today,
       userName: ''
     }
   });
 
+  const handleFormSubmit = (data: WaitlistFormData) => {
+    // Create a clean copy of the data
+    const cleanData = {
+      flightNumber: data.flightNumber.trim(),
+      flightDate: data.flightDate,
+      userName: data.userName.trim().toUpperCase()
+    };
+    onSubmit(cleanData);
+  };
+
   return (
     <Card>
       <CardContent className="pt-6">
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+        <form onSubmit={handleSubmit(handleFormSubmit)} className="space-y-6">
           <div className="space-y-2">
             <Label htmlFor="flightNumber" className="flex items-center justify-between">
               <span>Flight Number</span>
@@ -80,13 +94,14 @@ export function WaitlistForm({ onSubmit }: WaitlistFormProps) {
 
           <div className="space-y-2">
             <Label htmlFor="userName" className="flex items-center justify-between">
-              <span>Your Name (Optional)</span>
+              <span>Your Name</span>
               <span className="text-xs text-muted-foreground">Format: LASTNAME/F</span>
             </Label>
             <div className="relative">
               <User className="absolute left-3 top-2.5 h-5 w-5 text-muted-foreground" />
               <Input
                 {...register('userName', {
+                  required: 'Name is required',
                   pattern: {
                     value: /^[A-Z]{2,3}\/[A-Z]$/,
                     message: 'Format: LASTNAME/F (e.g., DOE/J)'

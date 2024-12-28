@@ -12,3 +12,4 @@ package-lock.json
 .env.test
 .env.production
 alaska_waitlist.db
+logs/*.log

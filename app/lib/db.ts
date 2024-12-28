@@ -59,14 +59,17 @@ class Database {
     if (!this.db) return;
     
     await this.db.exec(`
+      DROP TABLE IF EXISTS waitlist_snapshots;
+      DROP TABLE IF EXISTS flights;
+
       CREATE TABLE IF NOT EXISTS flights (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         flight_number TEXT NOT NULL,
         flight_date TEXT NOT NULL,
         origin TEXT NOT NULL,
         destination TEXT NOT NULL,
-        departure_time TEXT,
-        arrival_time TEXT,
+        departure_time TEXT NOT NULL,
+        arrival_time TEXT NOT NULL,
         segment_index INTEGER NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(flight_number, flight_date, segment_index)
@@ -75,12 +78,17 @@ class Database {
       CREATE TABLE IF NOT EXISTS waitlist_snapshots (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         flight_id INTEGER REFERENCES flights(id),
-        waitlist_names TEXT,
+        waitlist_names TEXT NOT NULL,
         first_class_capacity INTEGER,
         first_class_available INTEGER,
         first_class_checked_in INTEGER,
-        snapshot_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        snapshot_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (flight_id) REFERENCES flights(id) ON DELETE CASCADE
       );
+
+      CREATE INDEX IF NOT EXISTS idx_flights_lookup ON flights(flight_number, flight_date);
+      CREATE INDEX IF NOT EXISTS idx_snapshots_flight ON waitlist_snapshots(flight_id);
+      CREATE INDEX IF NOT EXISTS idx_snapshots_time ON waitlist_snapshots(snapshot_time);
     `);
   }
 

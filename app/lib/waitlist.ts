@@ -17,6 +17,11 @@ export interface WaitlistSegment {
   totalWaitlisted: number | null;
   names?: string[];
   error?: string;
+  waitlistInfo?: {
+    capacity: number | null;
+    available: number | null;
+    checkedIn: number | null;
+  };
 }
 
 export interface WaitlistResult {
@@ -28,7 +33,7 @@ async function getPageContent(page: Page): Promise<string> {
   try {
     return await page.content();
   } catch (error) {
-    debugLog('Error getting page content: ' + (error instanceof Error ? error.message : 'Unknown error'));
+    debugLog('Error getting page content: ' + (error instanceof Error ? error.message : 'Unknown error'), 'error');
     return '';
   }
 }
@@ -36,8 +41,72 @@ async function getPageContent(page: Page): Promise<string> {
 export async function trackWaitlist(
   flightNumber: string,
   flightDate: string,
-  userName: string
+  userName: string,
+  forceRefresh: boolean = false
 ): Promise<WaitlistResult> {
+  // First check the database
+  try {
+    if (!forceRefresh) {
+      const cachedData = await db.getLatestWaitlistData(flightNumber, flightDate);
+      if (cachedData && cachedData.length > 0) {
+        // Check if data is less than 5 minutes old
+        const latestSnapshot = cachedData[0];
+        const snapshotTime = new Date(latestSnapshot.snapshot_time);
+        const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+        
+        if (snapshotTime > fiveMinutesAgo) {
+          debugLog('Using cached data from database');
+          
+          // Process cached data synchronously
+          const segments: WaitlistSegment[] = [];
+          for (const record of cachedData) {
+            try {
+              const names = JSON.parse(record.waitlist_names || '[]');
+              const nameIndex = names.findIndex((name: string) => name === userName);
+              segments.push({
+                flightNumber: record.flight_number,
+                date: record.flight_date,
+                origin: record.origin || 'Unknown',
+                destination: record.destination || 'Unknown',
+                departureTime: record.departure_time || 'Unknown',
+                arrivalTime: record.arrival_time || 'Unknown',
+                position: nameIndex !== -1 ? nameIndex + 1 : null,
+                totalWaitlisted: names.length,
+                names,
+                waitlistInfo: {
+                  capacity: record.first_class_capacity,
+                  available: record.first_class_available,
+                  checkedIn: record.first_class_checked_in
+                }
+              });
+            } catch (error) {
+              debugLog('Error parsing cached record: ' + (error instanceof Error ? error.message : 'Unknown error'), 'error');
+              segments.push({
+                flightNumber: record.flight_number,
+                date: record.flight_date,
+                origin: 'Unknown',
+                destination: 'Unknown',
+                departureTime: 'Unknown',
+                arrivalTime: 'Unknown',
+                position: null,
+                totalWaitlisted: null,
+                error: 'Error parsing cached data'
+              });
+            }
+          }
+          return { segments };
+        } else {
+          debugLog('Cached data is older than 5 minutes, fetching fresh data');
+        }
+      }
+    } else {
+      debugLog('Force refresh requested, bypassing cache');
+    }
+  } catch (error) {
+    debugLog('Error checking cache: ' + (error instanceof Error ? error.message : 'Unknown error'), 'error');
+  }
+
+  // If we get here, we need to fetch fresh data
   let page: Page | undefined;
   
   try {
@@ -57,6 +126,10 @@ export async function trackWaitlist(
     }
 
     const content = await getPageContent(page);
+    if (!content) {
+      throw new Error('Failed to get page content');
+    }
+    
     const $ = cheerio.load(content);
 
     // Parse flight segments
@@ -73,26 +146,41 @@ export async function trackWaitlist(
       const segment = segments[i];
       debugLog(`Processing segment ${i + 1}: ${segment.flightNumber} from ${segment.origin} to ${segment.destination}`);
 
-      // Get waitlist info for this segment
-      const waitlistInfo = parseWaitlistForSegment($, i);
-      
-      // Save to database
-      const flightId = await db.saveFlightSegment(segment, i);
-      if (flightId && waitlistInfo) {
-        await db.saveWaitlistSnapshot(flightId, waitlistInfo);
+      try {
+        // Get waitlist info for this segment
+        const waitlistInfo = parseWaitlistForSegment($, i);
+        
+        // Save to database
+        const flightId = await db.saveFlightSegment(segment, i);
+        if (flightId && waitlistInfo) {
+          await db.saveWaitlistSnapshot(flightId, waitlistInfo);
+        }
+
+        // Calculate position and total
+        const nameIndex = waitlistInfo?.names.findIndex(name => name === userName) ?? -1;
+        const position = nameIndex !== -1 ? nameIndex + 1 : null;
+        const totalWaitlisted = waitlistInfo?.names.length ?? null;
+
+        processedSegments.push({
+          ...segment,
+          position,
+          totalWaitlisted,
+          names: waitlistInfo?.names || [],
+          waitlistInfo: waitlistInfo ? {
+            capacity: waitlistInfo.capacity,
+            available: waitlistInfo.available,
+            checkedIn: waitlistInfo.checkedIn
+          } : undefined
+        });
+      } catch (error) {
+        debugLog(`Error processing segment ${i + 1}: ` + (error instanceof Error ? error.message : 'Unknown error'), 'error');
+        processedSegments.push({
+          ...segment,
+          position: null,
+          totalWaitlisted: null,
+          error: 'Error processing segment'
+        });
       }
-
-      // Calculate position and total
-      const nameIndex = waitlistInfo?.names.findIndex(name => name === userName) ?? -1;
-      const position = nameIndex !== -1 ? nameIndex + 1 : null;
-      const totalWaitlisted = waitlistInfo?.names.length ?? null;
-
-      processedSegments.push({
-        ...segment,
-        position,
-        totalWaitlisted,
-        names: waitlistInfo?.names || []
-      });
     }
 
     return {
@@ -100,7 +188,7 @@ export async function trackWaitlist(
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-    debugLog('Error tracking waitlist: ' + errorMessage);
+    debugLog('Error tracking waitlist: ' + errorMessage, 'error');
     
     return {
       segments: [{
@@ -119,7 +207,7 @@ export async function trackWaitlist(
   } finally {
     if (page) {
       await page.close().catch(error => {
-        debugLog('Error closing page: ' + (error instanceof Error ? error.message : 'Unknown error'));
+        debugLog('Error closing page: ' + (error instanceof Error ? error.message : 'Unknown error'), 'error');
       });
     }
   }

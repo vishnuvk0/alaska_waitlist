@@ -1,15 +1,37 @@
 import { NextResponse } from 'next/server';
 import { trackWaitlist } from '@/lib/waitlist';
 import { rateLimiter } from '@/lib/rate-limiter';
-import { debugLog, logDatabaseState } from '@/lib/server-utils';
+import { debugLog, logDatabaseState, serializeError } from '@/lib/server-utils';
 import db from '@/lib/db';
+
+// Helper function to safely serialize objects
+function safeSerialize(obj: any): any {
+  const seen = new WeakSet();
+  return JSON.parse(JSON.stringify(obj, (key, value) => {
+    if (typeof value === 'object' && value !== null) {
+      if (seen.has(value)) {
+        return '[Circular]';
+      }
+      seen.add(value);
+    }
+    // Handle special cases
+    if (value instanceof Error) {
+      return {
+        message: value.message,
+        name: value.name,
+        stack: value.stack
+      };
+    }
+    return value;
+  }));
+}
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { flightNumber, flightDate, userName } = body;
+    const { flightNumber, flightDate, userName, forceRefresh } = body;
 
     if (!flightNumber || !flightDate || !userName) {
       return NextResponse.json(
@@ -31,17 +53,40 @@ export async function POST(request: Request) {
     }
 
     debugLog(`Processing waitlist request for flight ${flightNumber} on ${flightDate} for user ${userName}`);
-    const result = await trackWaitlist(flightNumber, flightDate, userName);
+    const result = await trackWaitlist(flightNumber, flightDate, userName, forceRefresh);
     
     // Log database state after successful tracking
     await logDatabaseState(db);
     
-    return NextResponse.json(result);
+    // Safely serialize the result
+    const safeResult = safeSerialize({
+      segments: result.segments.map(segment => ({
+        flightNumber: segment.flightNumber,
+        date: segment.date,
+        origin: segment.origin || 'Unknown',
+        destination: segment.destination || 'Unknown',
+        departureTime: segment.departureTime || 'Unknown',
+        arrivalTime: segment.arrivalTime || 'Unknown',
+        position: segment.position,
+        totalWaitlisted: segment.totalWaitlisted,
+        names: segment.names || [],
+        error: segment.error,
+        waitlistInfo: segment.waitlistInfo ? {
+          capacity: segment.waitlistInfo.capacity,
+          available: segment.waitlistInfo.available,
+          checkedIn: segment.waitlistInfo.checkedIn
+        } : undefined
+      })),
+      error: result.error
+    });
+    
+    return NextResponse.json(safeResult);
   } catch (error: any) {
     console.error('Error in trackWaitlist API:', error);
+    const serializedError = serializeError(error);
     return NextResponse.json(
-      { error: error.message || 'Internal server error' },
-      { status: error.status || 500 }
+      { error: serializedError.message },
+      { status: serializedError.status || 500 }
     );
   }
 } 

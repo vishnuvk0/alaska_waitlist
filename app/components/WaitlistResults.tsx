@@ -106,14 +106,35 @@ export function WaitlistResults({ data, onRefresh }: WaitlistResultsProps) {
               <div className="flex items-center text-sm">
                 <Users className="mr-2 h-4 w-4 text-muted-foreground" />
                 <span>Your Position:</span>
-                <span className="ml-1 font-medium">
+                <span className={cn(
+                  "ml-1 font-medium",
+                  segment.position !== null && segment.waitlistInfo && 
+                  segment.waitlistInfo.available !== null && 
+                  segment.position > segment.waitlistInfo.available && "text-destructive"
+                )}>
                   {segment.position !== null ? (
-                    <>#{segment.position} of {segment.totalWaitlisted || '?'} total</>
+                    <>
+                      #{segment.position} of {segment.totalWaitlisted || '?'} total
+                      {segment.waitlistInfo && segment.waitlistInfo.available !== null && (
+                        <span className="ml-2">
+                          {segment.position <= segment.waitlistInfo.available ? (
+                            <Badge variant="secondary" className="ml-1 bg-green-100 text-green-800">Likely Upgrade</Badge>
+                          ) : (
+                            <Badge variant="destructive" className="ml-1">Unlikely Upgrade</Badge>
+                          )}
+                        </span>
+                      )}
+                    </>
                   ) : (
                     'Not found on waitlist'
                   )}
                 </span>
               </div>
+              {segment.waitlistInfo && segment.waitlistInfo.available !== null && (
+                <p className="text-sm text-muted-foreground">
+                  {segment.waitlistInfo.available} seats available for upgrade
+                </p>
+              )}
             </div>
 
             {/* Waitlist Names */}
