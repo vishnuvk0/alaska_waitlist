@@ -35,7 +35,7 @@ export interface DatabaseRecord {
 }
 
 class Database {
-  private db: SQLiteDatabase<sqlite3.Database, sqlite3.Statement> | null = null;
+  public db: SQLiteDatabase<sqlite3.Database, sqlite3.Statement> | null = null;
   public isDbAvailable = false;
 
   async initDb(): Promise<void> {

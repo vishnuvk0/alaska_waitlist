@@ -41,10 +41,41 @@ export function parseFlightSegments($: CheerioAPI): FlightSegment[] {
       // Try auro-flight attributes first
       if ($flight.length) {
         flightNumber = $flight.attr('flights')?.replace('AS ', '') || '';
-        origin = $flight.attr('departurestation') || '';
-        destination = $flight.attr('arrivalstation') || '';
         departureTime = $flight.attr('departuretime')?.split(' ')[1] || '';
         arrivalTime = $flight.attr('arrivaltime')?.split(' ')[1] || '';
+        
+        // For multi-segment flights, we need to parse the route differently
+        // Look for the sequence of airport-helper elements
+        const $statusContainer = $container.closest('.parent-wrapper').prev().find('.primary-status');
+        if ($statusContainer.length) {
+          const $airportHelpers = $statusContainer.find('airport-helper');
+          debugLog(`Found ${$airportHelpers.length} airport helpers`);
+          
+          // For this specific segment, find the correct pair of airports
+          if ($flight.attr('departurestation')) {
+            const depStation = $flight.attr('departurestation');
+            const arrStation = $flight.attr('arrivalstation');
+            
+            // Find the matching sequence in airport-helpers
+            $airportHelpers.each((j, helper) => {
+              const thisAirport = $(helper).attr('iata');
+              const nextHelper = $airportHelpers.eq(j + 1);
+              const nextAirport = nextHelper.attr('iata');
+              
+              if (thisAirport === depStation && nextAirport === arrStation) {
+                origin = thisAirport as string;
+                destination = nextAirport as string;
+                return false; // Break the each loop
+              }
+            });
+          }
+        }
+        
+        // If we still don't have origin/destination, try the standard attributes
+        if (!origin || !destination) {
+          origin = $flight.attr('departurestation') || '';
+          destination = $flight.attr('arrivalstation') || '';
+        }
       }
       
       // If any values are missing, try JSON-LD
@@ -77,7 +108,7 @@ export function parseFlightSegments($: CheerioAPI): FlightSegment[] {
         date
       }));
 
-      if (flightNumber && date) {
+      if (flightNumber && date && origin && destination) {
         const segment: FlightSegment = {
           flightNumber,
           date,

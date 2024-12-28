@@ -251,13 +251,13 @@ export async function handlePressAndHoldVerification(page: Page, maxRetries = 2)
       
       await page.mouse.move(x, y);
       await page.mouse.down();
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      await new Promise(resolve => setTimeout(resolve, 16000));
       await page.mouse.up();
 
       // Wait for verification to complete
       await page.waitForFunction(
         () => !document.querySelector('#px-captcha'),
-        { timeout: 10000 }
+        { timeout: 8000 }
       );
 
       return true;
