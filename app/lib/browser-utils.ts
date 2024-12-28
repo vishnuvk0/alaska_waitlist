@@ -1,11 +1,11 @@
 import puppeteer, { Browser, Page } from 'puppeteer';
 import { debugLog } from './server-utils';
 import { exec } from 'child_process';
+import { captureVerificationProcess } from './screenshot-utils';
 
 let browserInstance: Browser | null = null;
-let connectionRetries = 0;
+let browserInitPromise: Promise<Browser> | null = null;
 const MAX_RETRIES = 3;
-const WS_ENDPOINT_RETRIES = 3;
 
 interface BrowserConfig {
   viewport: {
@@ -66,154 +66,192 @@ function getRandomBrowserConfig(): BrowserConfig {
 }
 
 export async function initBrowser(): Promise<Browser> {
-  try {
-    if (browserInstance) {
-      try {
-        await browserInstance.close();
-      } catch (e) {
-        debugLog('Failed to close existing browser: ' + (e instanceof Error ? e.message : 'Unknown error'));
-      }
-      browserInstance = null;
+  // Clean up existing browser
+  if (browserInstance) {
+    try {
+      await browserInstance.close();
+    } catch (e) {
+      debugLog('Failed to close existing browser: ' + (e instanceof Error ? e.message : 'Unknown error'));
     }
+    browserInstance = null;
+  }
 
-    // Kill any existing Chrome processes that might interfere
-    if (process.platform === 'darwin') {
-      await new Promise<void>((resolve) => {
-        exec('pkill -f "(Google Chrome)"', () => resolve());
+  // Kill any existing Chrome processes
+  if (process.platform === 'darwin') {
+    await new Promise<void>((resolve) => {
+      exec('pkill -f "(Google Chrome)"', () => resolve());
+    });
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  const config = getRandomBrowserConfig();
+  let retryCount = 0;
+  let lastError: Error | null = null;
+
+  while (retryCount < MAX_RETRIES) {
+    try {
+      const executablePath = process.platform === 'darwin' 
+        ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+        : undefined;
+
+      const browser = await puppeteer.launch({
+        headless: true,
+        args: [
+          ...config.args,
+          '--single-process',
+          '--disable-features=site-per-process',
+          '--no-zygote'
+        ],
+        defaultViewport: config.viewport,
+        executablePath,
+        env: {
+          ...process.env,
+          DISPLAY: process.env.DISPLAY || ':0'
+        },
+        timeout: 15000,
+        protocolTimeout: 15000
       });
-      await new Promise(r => setTimeout(r, 1000));
-    }
 
-    const config = getRandomBrowserConfig();
-    let wsEndpointRetries = WS_ENDPOINT_RETRIES;
-    let browser: Browser;
-
-    while (wsEndpointRetries > 0) {
+      // Test browser connection
       try {
-        const executablePath = process.platform === 'darwin' 
-          ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
-          : undefined;
-
-        browser = await puppeteer.launch({
-          headless: true,
-          args: config.args,
-          defaultViewport: config.viewport,
-          executablePath,
-          env: {
-            ...process.env,
-            DISPLAY: process.env.DISPLAY || ':0'
-          }
-        });
-
-        // Test the connection immediately
         await new Promise(r => setTimeout(r, 1000));
         const pages = await browser.pages();
+        const testPage = pages[0] || await browser.newPage();
+        await testPage.setUserAgent(config.userAgent);
+        await testPage.evaluate(() => navigator.userAgent);
         if (pages.length === 0) {
-          const testPage = await browser.newPage();
-          await testPage.setUserAgent(config.userAgent);
-          await testPage.evaluate(() => navigator.userAgent);
           await testPage.close();
-        } else {
-          await pages[0].setUserAgent(config.userAgent);
-          await pages[0].evaluate(() => navigator.userAgent);
         }
-
-        // Set up disconnect handler
-        let reconnectTimeout: NodeJS.Timeout;
-        browser.on('disconnected', async () => {
-          debugLog('Browser disconnected, attempting to reconnect...');
-          if (browserInstance === browser) {
-            try {
-              const pages = await browser.pages().catch(() => []);
-              await Promise.all(pages.map(page => page.close().catch(() => {})));
-              await browser.close().catch(() => {});
-            } catch (e) {
-              debugLog('Error cleaning up disconnected browser: ' + (e instanceof Error ? e.message : 'Unknown error'));
-            }
-            browserInstance = null;
-          }
-
-          if (reconnectTimeout) clearTimeout(reconnectTimeout);
-
-          reconnectTimeout = setTimeout(async () => {
-            if (connectionRetries < MAX_RETRIES) {
-              connectionRetries++;
-              debugLog(`Reconnection attempt ${connectionRetries}/${MAX_RETRIES}`);
-              try {
-                browserInstance = await initBrowser();
-                connectionRetries = 0;
-              } catch (e) {
-                debugLog('Failed to reconnect: ' + (e instanceof Error ? e.message : 'Unknown error'));
-                if (process.platform === 'darwin') {
-                  exec('pkill -f "(Google Chrome)"');
-                }
-              }
-            } else {
-              debugLog('Max reconnection attempts reached');
-              connectionRetries = 0;
-            }
-          }, 5000);
-        });
-
-        browserInstance = browser;
-        return browser;
       } catch (e) {
-        debugLog(`Browser connection failed (attempt ${WS_ENDPOINT_RETRIES - wsEndpointRetries + 1}): ${e instanceof Error ? e.message : 'Unknown error'}`);
-        if (browser!) {
-          try {
-            const pages = await browser!.pages().catch(() => []);
-            await Promise.all(pages.map(page => page.close().catch(() => {})));
-            await browser!.close().catch(() => {});
-          } catch (closeError) {
-            debugLog('Error closing browser: ' + (closeError instanceof Error ? closeError.message : 'Unknown error'));
-          }
-        }
-        wsEndpointRetries--;
-        if (wsEndpointRetries === 0) throw e;
-        const delay = Math.min(1000 * Math.pow(2, WS_ENDPOINT_RETRIES - wsEndpointRetries), 10000);
-        await new Promise(r => setTimeout(r, delay));
+        await browser.close();
+        throw e;
       }
-    }
 
-    throw new Error('Failed to initialize browser after all retries');
-  } catch (error) {
-    debugLog('Browser initialization error: ' + (error instanceof Error ? error.message : 'Unknown error'));
-    throw error;
+      // Set up disconnect handler
+      browser.on('disconnected', () => {
+        debugLog('Browser disconnected');
+        if (browserInstance === browser) {
+          browserInstance = null;
+          browserInitPromise = null;
+        }
+      });
+
+      browserInstance = browser;
+      return browser;
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error('Unknown error');
+      debugLog(`Browser launch attempt ${retryCount + 1} failed: ${lastError.message}`);
+      retryCount++;
+      
+      if (retryCount === MAX_RETRIES) {
+        throw lastError;
+      }
+      
+      await new Promise(r => setTimeout(r, 1000 * retryCount));
+    }
   }
+
+  throw new Error('Failed to initialize browser after all retries');
 }
 
 export async function getBrowser(): Promise<Browser> {
-  if (!browserInstance || !browserInstance.isConnected()) {
-    browserInstance = await initBrowser();
+  if (browserInstance?.isConnected()) {
+    return browserInstance;
   }
-  return browserInstance;
+
+  // If there's already a browser initialization in progress, wait for it
+  if (browserInitPromise) {
+    return browserInitPromise;
+  }
+
+  // Start new browser initialization
+  browserInitPromise = initBrowser().finally(() => {
+    browserInitPromise = null;
+  });
+
+  return browserInitPromise;
 }
 
 export async function createPage(): Promise<Page> {
-  const browser = await getBrowser();
-  const page = await browser.newPage();
-  
-  // Set viewport and user agent
-  const config = getRandomBrowserConfig();
-  await page.setViewport(config.viewport);
-  await page.setUserAgent(config.userAgent);
+  let retryCount = 0;
+  let lastError: Error | null = null;
 
-  // Set up error handling for the page
-  page.on('error', err => {
-    debugLog('Page error: ' + err.message);
-  });
+  while (retryCount < MAX_RETRIES) {
+    try {
+      const browser = await getBrowser();
+      const page = await browser.newPage();
+      
+      // Set viewport and user agent
+      const config = getRandomBrowserConfig();
+      await page.setViewport(config.viewport);
+      await page.setUserAgent(config.userAgent);
 
-  page.on('pageerror', err => {
-    debugLog('Page error: ' + (err instanceof Error ? err.message : String(err)));
-  });
+      // Enable request interception
+      await page.setRequestInterception(true);
+      page.on('request', (request) => {
+        const resourceType = request.resourceType();
+        if (['image', 'stylesheet', 'font', 'media'].includes(resourceType)) {
+          request.abort();
+        } else {
+          request.continue();
+        }
+      });
 
-  return page;
+      // Set up error handling
+      page.on('error', err => {
+        debugLog('Page error: ' + err.message);
+      });
+
+      page.on('pageerror', err => {
+        debugLog('Page error: ' + (err instanceof Error ? err.message : String(err)));
+      });
+
+      // Test page is working
+      await page.evaluate(() => navigator.userAgent);
+      
+      return page;
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error('Unknown error');
+      debugLog(`Failed to create page (attempt ${retryCount + 1}): ${lastError.message}`);
+      retryCount++;
+      
+      if (retryCount === MAX_RETRIES) {
+        throw lastError;
+      }
+      
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+
+  throw new Error('Failed to create page after all retries');
 }
 
 export async function needsVerification(page: Page): Promise<boolean> {
   try {
-    const verificationElement = await page.$('#px-captcha');
-    return !!verificationElement;
+    // Quick check for waitlist container
+    const hasWaitlist = await page.$('.waitlist-text-container.svelte-fawh78')
+      .then(element => !!element)
+      .catch(() => false);
+    
+    if (hasWaitlist) {
+      return false;
+    }
+    
+    // Check for verification indicators
+    const title = await page.title();
+    const content = await page.content();
+    
+    const needsVerify = title.includes('Verify') || 
+                       title.includes('Security') || 
+                       content.includes('Press & Hold') ||
+                       content.includes('verify you are a human') ||
+                       await page.$('#px-captcha').then(el => !!el).catch(() => false);
+    
+    if (needsVerify) {
+      debugLog('Verification needed - detected verification page');
+    }
+    
+    return needsVerify;
   } catch (error) {
     debugLog('Error checking verification: ' + (error instanceof Error ? error.message : 'Unknown error'));
     return false;
@@ -221,52 +259,78 @@ export async function needsVerification(page: Page): Promise<boolean> {
 }
 
 export async function handlePressAndHoldVerification(page: Page, maxRetries = 2): Promise<boolean> {
-  let retries = 0;
-  while (retries < maxRetries) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      const verificationButton = await page.$('#px-captcha');
-      if (!verificationButton) {
-        return false;
+      if (attempt > 0) {
+        debugLog(`Retry attempt ${attempt}/${maxRetries} for verification`);
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
 
-      const boundingBox = await verificationButton.boundingBox();
-      if (!boundingBox) {
-        return false;
-      }
+      // Start screenshot recording
+      const stopScreenshots = await captureVerificationProcess(page);
 
-      const x = boundingBox.x + boundingBox.width / 2;
-      const y = boundingBox.y + boundingBox.height / 2;
+      // Wait for any animations to complete
+      await new Promise(r => setTimeout(r, 2000));
 
-      // Random mouse movement before clicking
-      const randomMove = () => {
-        const offsetX = Math.random() * 100 - 50;
-        const offsetY = Math.random() * 100 - 50;
-        return page.mouse.move(x + offsetX, y + offsetY);
-      };
+      // Use the known working coordinates with slight randomization
+      const buttonX = Math.floor(Math.random() * (1096 - 872) + 872);
+      const buttonY = Math.floor(Math.random() * (617 - 615) + 615);
 
-      await randomMove();
-      await new Promise(r => setTimeout(r, Math.random() * 500 + 200));
-      await randomMove();
-      await new Promise(r => setTimeout(r, Math.random() * 500 + 200));
+      debugLog(`Attempting press-and-hold verification at coordinates: ${buttonX}, ${buttonY}`);
       
-      await page.mouse.move(x, y);
+      // Ensure mouse is released and reset position
+      await page.mouse.up().catch(() => {});
+      await page.mouse.move(0, 0);
+      await new Promise(r => setTimeout(r, 500));
+      
+      // Move to the position gradually
+      await page.mouse.move(buttonX, buttonY, { steps: 10 });
+      await new Promise(r => setTimeout(r, 1000));
+      
+      // Press and hold for exactly 15 seconds
       await page.mouse.down();
-      await new Promise(resolve => setTimeout(resolve, 16000));
+      debugLog('Started mouse down');
+      await new Promise(resolve => setTimeout(resolve, 15000));
+      debugLog('Completed 15s hold, releasing');
       await page.mouse.up();
+      
+      // Wait to check the result
+      await new Promise(resolve => setTimeout(resolve, 3000));
 
-      // Wait for verification to complete
-      await page.waitForFunction(
-        () => !document.querySelector('#px-captcha'),
-        { timeout: 8000 }
-      );
+      // Stop screenshot recording
+      await stopScreenshots();
+      
+      // Multiple verification checks
+      const title = await page.title();
+      const content = await page.content();
+      const stillHasVerification = await page.$('#px-captcha').then(el => !!el).catch(() => false);
+      const hasWaitlist = await page.$('.waitlist-text-container').then(el => !!el).catch(() => false);
+      
+      if (title.includes('been denied') || 
+          content.includes('Access to this page has been denied') || 
+          stillHasVerification) {
+        debugLog('Verification failed - detected denial message or verification still present');
+        if (attempt === maxRetries) return false;
+        continue;
+      }
 
+      if (hasWaitlist) {
+        debugLog('Verification successful - waitlist container found');
+        return true;
+      }
+      
+      // If we get here, do one final check
+      await new Promise(r => setTimeout(r, 2000));
+      if (await needsVerification(page)) {
+        debugLog('Verification still needed after final check');
+        if (attempt === maxRetries) return false;
+        continue;
+      }
+      
       return true;
     } catch (error) {
-      debugLog('Error handling verification: ' + (error instanceof Error ? error.message : 'Unknown error'));
-      retries++;
-      if (retries === maxRetries) {
-        return false;
-      }
+      debugLog('Error during press-and-hold verification: ' + (error instanceof Error ? error.message : 'Unknown error'));
+      if (attempt === maxRetries) return false;
       await new Promise(r => setTimeout(r, 1000));
     }
   }

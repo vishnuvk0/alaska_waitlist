@@ -142,7 +142,47 @@ export async function trackWaitlist(
     const url = `https://www.alaskaair.com/status/${flightNumber}/${urlDate}`;
     
     debugLog(`Navigating to ${url}`);
-    await page.goto(url, { waitUntil: 'networkidle0', timeout: 30000 });
+    
+    // Add retry logic for navigation
+    let retryCount = 0;
+    const maxRetries = 3;
+    let lastError: Error | null = null;
+
+    while (retryCount < maxRetries) {
+      try {
+        await page.goto(url, { 
+          waitUntil: 'networkidle0', 
+          timeout: 30000 
+        });
+        
+        // Wait for critical elements
+        await Promise.race([
+          page.waitForSelector('.waitlist-text-container', { timeout: 5000 }),
+          page.waitForSelector('.accordion-container-fs', { timeout: 5000 })
+        ]).catch(() => {});
+
+        // If we get here without error, break the retry loop
+        break;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error('Unknown error');
+        debugLog(`Navigation attempt ${retryCount + 1} failed: ${lastError.message}`);
+        
+        // Check if browser is still connected
+        if (!page.browser().isConnected()) {
+          debugLog('Browser disconnected, creating new page...');
+          await page.close().catch(() => {});
+          page = await createPage();
+        }
+        
+        retryCount++;
+        if (retryCount === maxRetries) {
+          throw lastError;
+        }
+        
+        // Wait before retry
+        await new Promise(r => setTimeout(r, 5000));
+      }
+    }
     
     if (await needsVerification(page)) {
       debugLog('Verification needed, attempting to handle...');

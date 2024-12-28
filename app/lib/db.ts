@@ -59,8 +59,6 @@ class Database {
     if (!this.db) return;
     
     await this.db.exec(`
-      DROP TABLE IF EXISTS waitlist_snapshots;
-      DROP TABLE IF EXISTS flights;
 
       CREATE TABLE IF NOT EXISTS flights (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

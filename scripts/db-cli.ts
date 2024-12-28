@@ -7,7 +7,7 @@ const command = process.argv[2];
 if (commands[command as keyof typeof commands]) {
   commands[command as keyof typeof commands]()
     .then(() => process.exit(0))
-    .catch(err => {
+    .catch((err: any) => {
       console.error('Error:', err);
       process.exit(1);
     });
