@@ -31,12 +31,39 @@ export function parseFlightSegments($: CheerioAPI): FlightSegment[] {
     if ($flight.length) {
       debugLog(`\nAnalyzing flight element ${i + 1}:`);
       
-      // Get flight details from attributes
-      const flightNumber = $flight.attr('flights')?.replace('AS ', '') || '';
-      const origin = $flight.attr('departurestation') || 'Unknown';
-      const destination = $flight.attr('arrivalstation') || 'Unknown';
-      const departureTime = $flight.attr('departuretime')?.split(' ')[1] || 'Unknown';
-      const arrivalTime = $flight.attr('arrivaltime')?.split(' ')[1] || 'Unknown';
+      // Get flight details with multiple fallbacks
+      let flightNumber = '';
+      let origin = '';
+      let destination = '';
+      let departureTime = '';
+      let arrivalTime = '';
+      
+      // Try auro-flight attributes first
+      if ($flight.length) {
+        flightNumber = $flight.attr('flights')?.replace('AS ', '') || '';
+        origin = $flight.attr('departurestation') || '';
+        destination = $flight.attr('arrivalstation') || '';
+        departureTime = $flight.attr('departuretime')?.split(' ')[1] || '';
+        arrivalTime = $flight.attr('arrivaltime')?.split(' ')[1] || '';
+      }
+      
+      // If any values are missing, try JSON-LD
+      try {
+        const jsonLdScript = $('script[type="application/ld+json"]').first().html();
+        if (jsonLdScript) {
+          const flightData = JSON.parse(jsonLdScript);
+          if (!origin) origin = flightData.departureAirport;
+          if (!destination) destination = flightData.arrivalAirport;
+          if (!departureTime) departureTime = new Date(flightData.departureTime).toLocaleTimeString();
+          if (!arrivalTime) arrivalTime = new Date(flightData.arrivalTime).toLocaleTimeString();
+        }
+      } catch (e) {
+        debugLog('Failed to parse JSON-LD: ' + e);
+      }
+      
+      // Try meta tags as another fallback
+      if (!origin) origin = $('meta[name="origin"]').attr('content') || '';
+      if (!destination) destination = $('meta[name="destination"]').attr('content') || '';
       
       // Get the date from the timestamp element
       const date = $('.timestamp').first().text().trim();
@@ -156,7 +183,7 @@ export function formatDate(date: Date): string {
 }
 
 export function isValidFlightNumber(flightNumber: string): boolean {
-  return /^\d{3,4}$/.test(flightNumber);
+  return /^\d{1,5}$/.test(flightNumber);
 }
 
 export function isValidDate(date: string): boolean {
