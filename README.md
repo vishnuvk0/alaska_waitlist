@@ -7,7 +7,7 @@
 2. install `node.js` with `brew install node.js`
 
 
-3. `npm instal && npm run build`
+3. `npm install && npm run build`
 4. `npm run dev`
 
 5. page will load at host:8080
