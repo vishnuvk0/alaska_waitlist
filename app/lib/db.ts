@@ -20,6 +20,8 @@ export interface WaitlistSnapshot {
 }
 
 export interface DatabaseRecord {
+  id?: number;
+  flight_id?: number;
   flight_number: string;
   flight_date: string;
   origin: string;
@@ -34,7 +36,15 @@ export interface DatabaseRecord {
   snapshot_time: string;
 }
 
-class Database {
+export interface FlightRecord {
+  id: number;
+  flight_number: string;
+  flight_date: string;
+  origin: string;
+  departure_time: string;
+}
+
+export class Database {
   public db: SQLiteDatabase<sqlite3.Database, sqlite3.Statement> | null = null;
   public isDbAvailable = false;
 
@@ -59,7 +69,6 @@ class Database {
     if (!this.db) return;
     
     await this.db.exec(`
-
       CREATE TABLE IF NOT EXISTS flights (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         flight_number TEXT NOT NULL,
@@ -84,9 +93,31 @@ class Database {
         FOREIGN KEY (flight_id) REFERENCES flights(id) ON DELETE CASCADE
       );
 
+      CREATE TABLE IF NOT EXISTS elite_status (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        passenger TEXT NOT NULL,
+        status TEXT NOT NULL,
+        flight_number TEXT NOT NULL,
+        flight_date TEXT NOT NULL,
+        added_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(passenger, flight_number, flight_date)
+      );
+
+      CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        first_name TEXT NOT NULL,
+        last_name TEXT NOT NULL,
+        status_level TEXT NOT NULL CHECK (status_level IN ('MVP', 'MVP_GOLD', 'MVP_GOLD_75K')),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
       CREATE INDEX IF NOT EXISTS idx_flights_lookup ON flights(flight_number, flight_date);
       CREATE INDEX IF NOT EXISTS idx_snapshots_flight ON waitlist_snapshots(flight_id);
       CREATE INDEX IF NOT EXISTS idx_snapshots_time ON waitlist_snapshots(snapshot_time);
+      CREATE INDEX IF NOT EXISTS idx_elite_status_flight ON elite_status(flight_number, flight_date);
+      CREATE INDEX IF NOT EXISTS idx_elite_status_passenger ON elite_status(passenger);
     `);
   }
 
@@ -136,11 +167,11 @@ class Database {
     }
   }
 
-  async getLatestWaitlistData(flightNumber: string, flightDate: string): Promise<DatabaseRecord[] | null> {
-    if (!this.isDbAvailable || !this.db) return null;
+  async getLatestWaitlistData(flightNumber: string, flightDate: string): Promise<DatabaseRecord[]> {
+    if (!this.isDbAvailable || !this.db) return [];
     
     try {
-      return await this.db.all<DatabaseRecord[]>(`
+      const result = await this.db.all(`
         WITH LatestSnapshots AS (
           SELECT 
             w.*,
@@ -162,10 +193,12 @@ class Database {
         SELECT * FROM LatestSnapshots 
         WHERE rn = 1
         ORDER BY segment_index
-      `, [flightNumber, flightDate]);
+      `, [flightNumber, flightDate]) as DatabaseRecord[];
+      
+      return result;
     } catch (error) {
       debugLog('Error getting latest waitlist data: ' + (error instanceof Error ? error.message : 'Unknown error'));
-      return null;
+      return [];
     }
   }
 
@@ -197,7 +230,7 @@ class Database {
   }
 }
 
-const db = new Database();
+export const db = new Database();
 await db.initDb();
 
 export default db; 

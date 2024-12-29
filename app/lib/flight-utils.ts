@@ -186,11 +186,13 @@ export function validateFlightInput(flightNumber: string, date: string): string 
 
   const inputDate = new Date(date);
   const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
   const maxDate = new Date();
   maxDate.setDate(today.getDate() + 3);
 
-  if (inputDate < today) {
-    return 'Date cannot be in the past';
+  if (inputDate < yesterday) {
+    return 'Date cannot be more than 1 day in the past';
   }
 
   if (inputDate > maxDate) {

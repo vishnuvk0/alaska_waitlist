@@ -1,3 +1,5 @@
+'use client';
+
 import React from 'react';
 import { RefreshCw, Users, ExternalLink, Plane } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from './ui/card';

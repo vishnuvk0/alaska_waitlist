@@ -3,6 +3,7 @@ import { trackWaitlist } from '@/lib/waitlist';
 import { rateLimiter } from '@/lib/rate-limiter';
 import { debugLog, logDatabaseState, serializeError } from '@/lib/server-utils';
 import db from '@/lib/db';
+import { trackEliteStatus } from '../../lib/elite-status-tracker';
 
 // Helper function to safely serialize objects
 function safeSerialize(obj: any): any {
@@ -79,6 +80,9 @@ export async function POST(request: Request) {
       })),
       error: result.error
     });
+    
+    // Add this line to process elite status after each waitlist check
+    await trackEliteStatus(db);
     
     return NextResponse.json(safeResult);
   } catch (error: any) {
