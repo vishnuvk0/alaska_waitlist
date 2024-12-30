@@ -13,3 +13,7 @@ package-lock.json
 .env.production
 alaska_waitlist.db
 logs/*.log
+old_client_and_server/alaska_waitlist
+special_situation.html
+sample_waitlist_page.html
+alaska_waitlist.db

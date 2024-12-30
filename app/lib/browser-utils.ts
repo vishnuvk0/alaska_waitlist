@@ -65,6 +65,31 @@ function getRandomBrowserConfig(): BrowserConfig {
   };
 }
 
+async function findChromeExecutable(): Promise<string | undefined> {
+  const possiblePaths = [
+    '/usr/bin/google-chrome',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/chrome'
+  ];
+
+  for (const path of possiblePaths) {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        exec(`${path} --version`, (error) => {
+          if (error) reject(error);
+          else resolve();
+        });
+      });
+      debugLog(`Found Chrome executable at: ${path}`);
+      return path;
+    } catch (e) {
+      continue;
+    }
+  }
+  return undefined;
+}
+
 export async function initBrowser(): Promise<Browser> {
   // Clean up existing browser
   if (browserInstance) {
@@ -76,13 +101,17 @@ export async function initBrowser(): Promise<Browser> {
     browserInstance = null;
   }
 
-  // Kill any existing Chrome processes
+  // Kill any existing Chrome processes based on platform
   if (process.platform === 'darwin') {
     await new Promise<void>((resolve) => {
       exec('pkill -f "(Google Chrome)"', () => resolve());
     });
-    await new Promise(r => setTimeout(r, 500));
+  } else if (process.platform === 'linux') {
+    await new Promise<void>((resolve) => {
+      exec('pkill -f "(chrome|chromium)"', () => resolve());
+    });
   }
+  await new Promise(r => setTimeout(r, 500));
 
   const config = getRandomBrowserConfig();
   let retryCount = 0;
@@ -90,9 +119,18 @@ export async function initBrowser(): Promise<Browser> {
 
   while (retryCount < MAX_RETRIES) {
     try {
-      const executablePath = process.platform === 'darwin' 
-        ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
-        : undefined;
+      // Determine Chrome executable path based on platform
+      let executablePath;
+      if (process.platform === 'darwin') {
+        executablePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+      } else if (process.platform === 'linux') {
+        executablePath = await findChromeExecutable();
+        if (!executablePath) {
+          throw new Error('Could not find Chrome executable on Linux system');
+        }
+      }
+
+      debugLog(`Launching browser with executable: ${executablePath}`);
 
       const browser = await puppeteer.launch({
         headless: true,
@@ -100,7 +138,9 @@ export async function initBrowser(): Promise<Browser> {
           ...config.args,
           '--single-process',
           '--disable-features=site-per-process',
-          '--no-zygote'
+          '--no-zygote',
+          '--no-sandbox',
+          '--disable-setuid-sandbox'
         ],
         defaultViewport: config.viewport,
         executablePath,
