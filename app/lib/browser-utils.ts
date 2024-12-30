@@ -90,112 +90,83 @@ async function findChromeExecutable(): Promise<string | undefined> {
   return undefined;
 }
 
+async function testChromeExecution(): Promise<void> {
+  const execPath = await findChromeExecutable();
+  return new Promise((resolve, reject) => {
+    exec(`${execPath} --version`, (error, stdout, stderr) => {
+      debugLog(`Chrome version test output: ${stdout}`);
+      if (stderr) debugLog(`Chrome stderr: ${stderr}`);
+      if (error) {
+        debugLog(`Chrome execution error: ${error.message}`);
+        reject(error);
+      } else {
+        resolve();
+      }
+    });
+  });
+}
+
+async function testBrowserConnection(browser: Browser): Promise<void> {
+  const page = await browser.newPage();
+  try {
+    debugLog('Testing browser connection...');
+    await page.setDefaultNavigationTimeout(90000);
+    await page.setDefaultTimeout(90000);
+    await page.goto('https://www.google.com', {
+      waitUntil: 'domcontentloaded',
+      timeout: 60000
+    });
+    debugLog('Browser connection test successful');
+  } catch (error) {
+    debugLog(`Browser connection test failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw error;
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
+
 export async function initBrowser(): Promise<Browser> {
+  debugLog('Starting browser initialization...');
+  
   // Clean up existing browser
   if (browserInstance) {
-    try {
-      await browserInstance.close();
-    } catch (e) {
-      debugLog('Failed to close existing browser: ' + (e instanceof Error ? e.message : 'Unknown error'));
-    }
+    await browserInstance.close().catch(() => {});
     browserInstance = null;
   }
 
-  // Kill any existing Chrome processes based on platform
-  if (process.platform === 'darwin') {
-    await new Promise<void>((resolve) => {
-      exec('pkill -f "(Google Chrome)"', () => resolve());
-    });
-  } else if (process.platform === 'linux') {
-    await new Promise<void>((resolve) => {
-      exec('pkill -f "(chrome|chromium)"', () => resolve());
-    });
-  }
-  await new Promise(r => setTimeout(r, 500));
-
-  const config = getRandomBrowserConfig();
-  let retryCount = 0;
-  let lastError: Error | null = null;
-
-  while (retryCount < MAX_RETRIES) {
-    try {
-      // Determine Chrome executable path based on platform
-      let executablePath;
-      if (process.platform === 'darwin') {
-        executablePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-      } else if (process.platform === 'linux') {
-        executablePath = await findChromeExecutable();
-        if (!executablePath) {
-          throw new Error('Could not find Chrome executable on Linux system');
-        }
-      }
-
-      debugLog(`Launching browser with executable: ${executablePath}`);
-
-      const browser = await puppeteer.launch({
-        headless: true,
-        args: [
-          ...config.args,
-          '--single-process',
-          '--disable-features=site-per-process',
-          '--no-zygote',
-          '--no-sandbox',
-          '--disable-setuid-sandbox'
-        ],
-        defaultViewport: config.viewport,
-        executablePath,
-        env: {
-          ...process.env,
-          DISPLAY: process.env.DISPLAY || ':0'
-        },
-        timeout: 15000,
-        protocolTimeout: 15000
-      });
-
-      // Test browser connection
-      try {
-        await new Promise(r => setTimeout(r, 1000));
-        const pages = await browser.pages();
-        const testPage = pages[0] || await browser.newPage();
-        await testPage.setUserAgent(config.userAgent);
-        await testPage.evaluate(() => navigator.userAgent);
-        if (pages.length === 0) {
-          await testPage.close();
-        }
-      } catch (e) {
-        await browser.close();
-        throw e;
-      }
-
-      // Set up disconnect handler
-      browser.on('disconnected', () => {
-        debugLog('Browser disconnected');
-        if (browserInstance === browser) {
-          browserInstance = null;
-          browserInitPromise = null;
-        }
-      });
-
-      browserInstance = browser;
-      return browser;
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error('Unknown error');
-      debugLog(`Browser launch attempt ${retryCount + 1} failed: ${lastError.message}`);
-      retryCount++;
-      
-      if (retryCount === MAX_RETRIES) {
-        throw lastError;
-      }
-      
-      await new Promise(r => setTimeout(r, 1000 * retryCount));
-    }
+  const execPath = await findChromeExecutable();
+  if (!execPath) {
+    throw new Error('Chrome executable not found');
   }
 
-  throw new Error('Failed to initialize browser after all retries');
+  debugLog(`Launching browser with executable: ${execPath}`);
+
+  const browser = await puppeteer.launch({
+    headless: true,
+    executablePath: execPath,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--disable-software-rasterizer',
+      '--headless',
+      '--hide-scrollbars',
+      '--mute-audio'
+    ],
+    defaultViewport: {
+      width: 1280,
+      height: 800
+    },
+    timeout: 30000
+  });
+
+  browserInstance = browser;
+  return browser;
 }
 
 export async function getBrowser(): Promise<Browser> {
-  if (browserInstance?.isConnected()) {
+  if (browserInstance && browserInstance.process() !== null) {
     return browserInstance;
   }
 

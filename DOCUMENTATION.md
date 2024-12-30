@@ -168,18 +168,6 @@ Helper functions for database operations.
 
 ## Security Features
 
-### Authentication
-- Password hashing
-- Session management
-- Rate limiting
-- Input validation
-
-### Data Protection
-- SQL injection prevention
-- XSS protection
-- CSRF tokens
-- Input sanitization
-
 ## Deployment Configuration
 
 ### PM2 Configuration (`ecosystem.config.cjs`)

@@ -66,7 +66,7 @@ export async function fetchWithTimeout(
 
 export async function logDatabaseState(db: typeof Database): Promise<void> {
   try {
-    debugLog('\n=== Current Database State ===');
+    debugLog('\n======');
     
     const data = await db.getAllData();
     if (!data) {
@@ -74,31 +74,31 @@ export async function logDatabaseState(db: typeof Database): Promise<void> {
       return;
     }
 
-    // Log flights
-    debugLog('\nFlights Table:');
-    data.flights.forEach((flight: FlightRecord) => {
-      debugLog(`Flight AS${flight.flight_number} on ${new Date(flight.flight_date).toLocaleDateString()}:
-        Segment ${flight.segment_index + 1}
-        Route: ${flight.origin} → ${flight.destination}
-        Times: ${flight.departure_time} → ${flight.arrival_time}
-        Created: ${new Date(flight.created_at).toLocaleString()}`);
-    });
+    // // Log flights
+    // debugLog('\nFlights Table:');
+    // data.flights.forEach((flight: FlightRecord) => {
+    //   debugLog(`Flight AS${flight.flight_number} on ${new Date(flight.flight_date).toLocaleDateString()}:
+    //     Segment ${flight.segment_index + 1}
+    //     Route: ${flight.origin} → ${flight.destination}
+    //     Times: ${flight.departure_time} → ${flight.arrival_time}
+    //     Created: ${new Date(flight.created_at).toLocaleString()}`);
+    // });
 
-    // Log snapshots
-    debugLog('\nWaitlist Snapshots Table:');
-    data.snapshots.forEach((snapshot: SnapshotRecord) => {
-      const names = JSON.parse(snapshot.waitlist_names || '[]');
-      debugLog(`Snapshot for AS${snapshot.flight_number} on ${new Date(snapshot.flight_date).toLocaleDateString()}:
-        Segment ${snapshot.segment_index + 1}
-        Names: ${names.join(', ')}
-        First Class:
-          Capacity: ${snapshot.first_class_capacity}
-          Available: ${snapshot.first_class_available}
-          Checked In: ${snapshot.first_class_checked_in}
-        Time: ${new Date(snapshot.snapshot_time).toLocaleString()}`);
-    });
+    // // Log snapshots
+    // debugLog('\nWaitlist Snapshots Table:');
+    // data.snapshots.forEach((snapshot: SnapshotRecord) => {
+    //   const names = JSON.parse(snapshot.waitlist_names || '[]');
+    //   debugLog(`Snapshot for AS${snapshot.flight_number} on ${new Date(snapshot.flight_date).toLocaleDateString()}:
+    //     Segment ${snapshot.segment_index + 1}
+    //     Names: ${names.join(', ')}
+    //     First Class:
+    //       Capacity: ${snapshot.first_class_capacity}
+    //       Available: ${snapshot.first_class_available}
+    //       Checked In: ${snapshot.first_class_checked_in}
+    //     Time: ${new Date(snapshot.snapshot_time).toLocaleString()}`);
+    // });
 
-    debugLog('\n=== End Database State ===\n');
+    // debugLog('\n=== End Database State ===\n');
   } catch (error) {
     debugLog('Error logging database state: ' + (error instanceof Error ? error.message : 'Unknown error'), 'error');
   }
