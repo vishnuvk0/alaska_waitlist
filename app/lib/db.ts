@@ -47,22 +47,40 @@ export interface FlightRecord {
 export class Database {
   public db: SQLiteDatabase<sqlite3.Database, sqlite3.Statement> | null = null;
   public isDbAvailable = false;
+  private initPromise: Promise<void> | null = null;
 
   async initDb(): Promise<void> {
-    try {
-      const dbPath = path.join(process.cwd(), 'alaska_waitlist.db');
-      this.db = await open({
-        filename: dbPath,
-        driver: sqlite3.Database
-      });
-      
-      await this.createTables();
-      this.isDbAvailable = true;
-      debugLog('Database initialized successfully at: ' + dbPath);
-    } catch (error) {
-      debugLog('Database connection failed: ' + (error instanceof Error ? error.message : 'Unknown error'));
-      this.isDbAvailable = false;
+    if (this.initPromise) {
+      return this.initPromise;
     }
+
+    this.initPromise = new Promise(async (resolve, reject) => {
+      try {
+        if (this.isDbAvailable && this.db) {
+          resolve();
+          return;
+        }
+
+        const dbPath = path.join(process.cwd(), 'alaska_waitlist.db');
+        this.db = await open({
+          filename: dbPath,
+          driver: sqlite3.Database
+        });
+        
+        await this.createTables();
+        this.isDbAvailable = true;
+        debugLog('Database initialized successfully at: ' + dbPath);
+        resolve();
+      } catch (error) {
+        debugLog('Database connection failed: ' + (error instanceof Error ? error.message : 'Unknown error'));
+        this.isDbAvailable = false;
+        this.db = null;
+        this.initPromise = null;
+        reject(error);
+      }
+    });
+
+    return this.initPromise;
   }
 
   private async createTables(): Promise<void> {
@@ -231,6 +249,10 @@ export class Database {
 }
 
 export const db = new Database();
-await db.initDb();
+
+// Initialize the database when the module is loaded
+db.initDb().catch(error => {
+  console.error('Failed to initialize database:', error);
+});
 
 export default db; 

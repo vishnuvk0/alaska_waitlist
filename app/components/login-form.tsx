@@ -23,16 +23,20 @@ export function LoginForm() {
   const router = useRouter();
   const [isLogin, setIsLogin] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
   const { register, handleSubmit, formState: { errors }, reset } = useForm<SignupFormData>();
 
   const onSubmit = async (data: SignupFormData) => {
     try {
       setError(null);
+      setIsLoading(true);
       const endpoint = isLogin ? '/api/auth/login' : '/api/auth/signup';
+      
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Accept': 'application/json'
         },
         body: JSON.stringify(data),
       });
@@ -50,6 +54,8 @@ export function LoginForm() {
     } catch (error) {
       console.error('Error:', error);
       setError(error instanceof Error ? error.message : 'Authentication failed');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -74,6 +80,7 @@ export function LoginForm() {
                 id="first_name"
                 {...register('first_name', { required: !isLogin })}
                 className={errors.first_name ? 'border-red-500' : ''}
+                disabled={isLoading}
               />
               {errors.first_name && (
                 <p className="text-red-500 text-sm">First name is required</p>
@@ -86,6 +93,7 @@ export function LoginForm() {
                 id="last_name"
                 {...register('last_name', { required: !isLogin })}
                 className={errors.last_name ? 'border-red-500' : ''}
+                disabled={isLoading}
               />
               {errors.last_name && (
                 <p className="text-red-500 text-sm">Last name is required</p>
@@ -98,6 +106,7 @@ export function LoginForm() {
                 id="status_level"
                 {...register('status_level', { required: !isLogin })}
                 className="w-full p-2 border rounded"
+                disabled={isLoading}
               >
                 <option value={EliteStatus.MVP}>MVP</option>
                 <option value={EliteStatus.MVP_GOLD}>MVP Gold</option>
@@ -116,6 +125,7 @@ export function LoginForm() {
             id="username"
             {...register('username', { required: true })}
             className={errors.username ? 'border-red-500' : ''}
+            disabled={isLoading}
           />
           {errors.username && (
             <p className="text-red-500 text-sm">Username is required</p>
@@ -129,14 +139,25 @@ export function LoginForm() {
             type="password"
             {...register('password', { required: true })}
             className={errors.password ? 'border-red-500' : ''}
+            disabled={isLoading}
           />
           {errors.password && (
             <p className="text-red-500 text-sm">Password is required</p>
           )}
         </div>
 
-        <Button type="submit" className="w-full">
-          {isLogin ? 'Login' : 'Create Account'}
+        <Button type="submit" className="w-full" disabled={isLoading}>
+          {isLoading ? (
+            <span className="flex items-center justify-center">
+              <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              {isLogin ? 'Logging in...' : 'Creating Account...'}
+            </span>
+          ) : (
+            isLogin ? 'Login' : 'Create Account'
+          )}
         </Button>
 
         <p className="text-center mt-4">
@@ -149,6 +170,7 @@ export function LoginForm() {
               reset();
             }}
             className="text-blue-500 hover:text-blue-700"
+            disabled={isLoading}
           >
             {isLogin ? 'Sign up' : 'Login'}
           </button>

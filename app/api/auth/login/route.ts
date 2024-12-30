@@ -1,8 +1,18 @@
 import { NextResponse } from 'next/server';
 import { db } from '../../../lib/db';
 import { verifyUser, generateAlaskaName } from '../../../lib/auth-utils';
+import { headers } from 'next/headers';
 
 export async function POST(request: Request) {
+  // Ensure proper content type
+  const contentType = headers().get('content-type');
+  if (!contentType?.includes('application/json')) {
+    return NextResponse.json(
+      { error: 'Content-Type must be application/json' },
+      { status: 415 }
+    );
+  }
+
   try {
     const body = await request.json();
     const { username, password } = body;
@@ -13,6 +23,11 @@ export async function POST(request: Request) {
         { error: 'Username and password are required' },
         { status: 400 }
       );
+    }
+
+    // Initialize database if needed
+    if (!db.isDbAvailable) {
+      await db.initDb();
     }
 
     // Verify user credentials
@@ -34,6 +49,11 @@ export async function POST(request: Request) {
         ...user,
         alaska_name: alaskaName,
       },
+    }, { 
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json'
+      }
     });
   } catch (error) {
     console.error('Login error:', error);

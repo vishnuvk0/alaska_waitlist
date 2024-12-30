@@ -2,8 +2,18 @@ import { NextResponse } from 'next/server';
 import { db } from '../../../lib/db';
 import { createUser, generateAlaskaName } from '../../../lib/auth-utils';
 import { EliteStatus } from '../../../lib/elite-status-tracker';
+import { headers } from 'next/headers';
 
 export async function POST(request: Request) {
+  // Ensure proper content type
+  const contentType = headers().get('content-type');
+  if (!contentType?.includes('application/json')) {
+    return NextResponse.json(
+      { error: 'Content-Type must be application/json' },
+      { status: 415 }
+    );
+  }
+
   try {
     const body = await request.json();
     const { username, password, first_name, last_name, status_level } = body;
@@ -22,6 +32,11 @@ export async function POST(request: Request) {
         { error: 'Invalid status level' },
         { status: 400 }
       );
+    }
+
+    // Initialize database if needed
+    if (!db.isDbAvailable) {
+      await db.initDb();
     }
 
     // Check if username already exists
@@ -61,6 +76,11 @@ export async function POST(request: Request) {
         ...user,
         alaska_name: alaskaName,
       },
+    }, {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json'
+      }
     });
   } catch (error) {
     console.error('Signup error:', error);

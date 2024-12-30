@@ -1,19 +1,41 @@
 import { NextResponse } from 'next/server';
-import { db } from '../lib/db';
-import { startSnapshotScheduler } from '../lib/snapshot-scheduler';
-import { debugLog } from '../lib/server-utils';
+import { headers } from 'next/headers';
 
-// Start the snapshot scheduler when the server starts
-if (process.env.NODE_ENV === 'production') {
-  startSnapshotScheduler().catch(error => {
-    debugLog('Failed to start snapshot scheduler: ' + (error instanceof Error ? error.message : 'Unknown error'));
+// Handle preflight requests
+export async function OPTIONS(request: Request) {
+  return new NextResponse(null, {
+    status: 204,
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Access-Control-Max-Age': '86400',
+    },
   });
 }
 
-export async function GET() {
-  return NextResponse.json({ status: 'ok' });
-}
+// Middleware to handle errors
+export function middleware(handler: Function) {
+  return async (request: Request) => {
+    try {
+      // Ensure proper content type for non-GET requests
+      if (request.method !== 'GET') {
+        const contentType = headers().get('content-type');
+        if (!contentType?.includes('application/json')) {
+          return NextResponse.json(
+            { error: 'Content-Type must be application/json' },
+            { status: 415 }
+          );
+        }
+      }
 
-export async function POST() {
-  return NextResponse.json({ status: 'ok' });
+      return await handler(request);
+    } catch (error) {
+      console.error('API error:', error);
+      return NextResponse.json(
+        { error: 'Internal server error' },
+        { status: 500 }
+      );
+    }
+  };
 } 
