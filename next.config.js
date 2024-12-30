@@ -16,9 +16,10 @@ const nextConfig = {
   experimental: {
     esmExternals: true
   },
-  output: 'standalone',
   poweredByHeader: false,
-  compress: true
+  compress: true,
+  hostname: '0.0.0.0',
+  port: 3000
 };
 
 export default nextConfig; 

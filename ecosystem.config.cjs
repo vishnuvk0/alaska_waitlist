@@ -2,9 +2,10 @@ module.exports = {
   apps: [
     {
       name: 'alaska-waitlist',
-      script: '.next/standalone/server.js',
-      instances: 'max',
-      exec_mode: 'cluster',
+      script: 'node_modules/next/dist/bin/next',
+      args: 'start',
+      instances: '1',
+      exec_mode: 'fork',
       autorestart: true,
       watch: false,
       max_memory_restart: '1G',
@@ -13,7 +14,6 @@ module.exports = {
         NODE_ENV: 'production',
         HOSTNAME: '0.0.0.0'
       }
-       
     }
   ]
 }; 
