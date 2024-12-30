@@ -14,28 +14,26 @@ export async function OPTIONS(request: Request) {
   });
 }
 
-// Middleware to handle errors
-export function middleware(handler: Function) {
-  return async (request: Request) => {
-    try {
-      // Ensure proper content type for non-GET requests
-      if (request.method !== 'GET') {
-        const contentType = headers().get('content-type');
-        if (!contentType?.includes('application/json')) {
-          return NextResponse.json(
-            { error: 'Content-Type must be application/json' },
-            { status: 415 }
-          );
-        }
+// Helper function for error handling
+async function handleRequest(request: Request, handler: () => Promise<NextResponse>) {
+  try {
+    // Ensure proper content type for non-GET requests
+    if (request.method !== 'GET') {
+      const contentType = headers().get('content-type');
+      if (!contentType?.includes('application/json')) {
+        return NextResponse.json(
+          { error: 'Content-Type must be application/json' },
+          { status: 415 }
+        );
       }
-
-      return await handler(request);
-    } catch (error) {
-      console.error('API error:', error);
-      return NextResponse.json(
-        { error: 'Internal server error' },
-        { status: 500 }
-      );
     }
-  };
+
+    return await handler();
+  } catch (error) {
+    console.error('API error:', error);
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    );
+  }
 } 
